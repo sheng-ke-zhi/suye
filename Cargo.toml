@@ -5,5 +5,6 @@ edition = "2021"
 description = "Read-only development toolchain diagnostics for SUYE"
 repository = "https://github.com/sheng-ke-zhi/suye"
 readme = "README.md"
-publish = false
+license = "MIT"
+publish = ["crates-io"]
 include = ["Cargo.toml", "Cargo.lock", "src/**", "tests/cli.rs", "README.md", "LICENSE"]

@@ -50,7 +50,7 @@ cargo package --offline
 ## GitHub Actions 与发布
 
 仓库已按用户授权公开。**上传 PyPI/crates.io 还会公开发行归档中的源码、README 和元数据。**
-公开仓库不等于已经选择开源许可证；许可证仍待用户确认，当前保留 `publish = false`。
+项目采用 MIT 许可证，完整文本见 `LICENSE`。
 本地构建或 CI 成功不代表包已发布，也不保证名称可注册。
 
 流程文件是 `.github/workflows/release.yml`，Actions 页面显示为 **Build and publish**：
@@ -98,7 +98,7 @@ python3.12 scripts/publishing_regression.py
 不会上传。它还验证 PyPI-only 的跳过条件，以及同步版本并更新 lockfile 后 CLI/Rust 测试通过。
 PR/main CI 会运行这些回归；手动 PyPI-only 运行跳过联网回归。测试不修改真实许可证、版本或 tag。
 
-`check_release.py --tag v0.1.0 --publish` 在尚未确认许可证时应失败，这不是普通构建失败。
+`check_release.py --tag v0.1.0 --publish` 校验版本与许可证等发布前提。
 后续版本需同步修改 `setup.cfg`、`python/suye/__init__.py`、`Cargo.toml`，
 再运行 `cargo generate-lockfile --offline`，将更新后的 `Cargo.lock` 一并提交审核。
 
