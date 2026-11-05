@@ -12,7 +12,10 @@ fn help_version_and_invalid_arguments() {
     for arguments in [&["--help"][..], &["-h"], &["--version"]] {
         assert!(run(arguments).status.success());
     }
-    assert_eq!(run(&["--version"]).stdout, b"suye 0.1.0\n");
+    assert_eq!(
+        run(&["--version"]).stdout,
+        format!("suye {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
+    );
     for arguments in [&[][..], &["unknown"], &["doctor", "extra"]] {
         assert_eq!(run(arguments).status.code(), Some(2));
     }

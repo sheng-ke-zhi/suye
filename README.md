@@ -66,6 +66,9 @@ cargo package --offline
   所有外部 Action 固定到提交 SHA，不使用可移动标签。
 - `publish=false`（默认）只做构建演练，不验证平台登录或执行环境审核；
   `publish=true` 才额外校验许可证、执行 Cargo 发布预检，再进入发布环境审核和上传。
+- Cargo 发布预检仅用于 `target=both/crates`，保留 `--dry-run --locked`，允许读取公开注册表配置，
+  不依赖预先初始化的 Cargo 缓存。`target=pypi` 跳过此预检及联网的发布回归测试，
+  仍执行离线 Rust 测试和打包，不因 crates.io 注册表不可达而阻断补发。
 
 ### 第一步：许可证与版本（发布前必做）
 
@@ -84,7 +87,18 @@ python3.12 -m unittest discover -s scripts -p 'test_*.py'
 python3.12 scripts/check_release.py --tag v0.1.0 --publish
 ```
 
-最后一条在尚未确认许可证时应失败，这不是普通构建失败。
+发布路径回归另需已有的 Rust stable 工具链，并允许读取 crates.io 的公开注册表配置：
+
+```sh
+python3.12 scripts/publishing_regression.py
+```
+
+此测试只在临时副本写入测试许可证及发布元数据，隔离 HOME/CARGO_HOME、不传递发布凭据，
+先验证空缓存下离线 test/package，再执行工作流原样的 `cargo publish --dry-run --locked`，
+不会上传。它还验证 PyPI-only 的跳过条件，以及同步版本并更新 lockfile 后 CLI/Rust 测试通过。
+PR/main CI 会运行这些回归；手动 PyPI-only 运行跳过联网回归。测试不修改真实许可证、版本或 tag。
+
+`check_release.py --tag v0.1.0 --publish` 在尚未确认许可证时应失败，这不是普通构建失败。
 后续版本需同步修改 `setup.cfg`、`python/suye/__init__.py`、`Cargo.toml`，
 再运行 `cargo generate-lockfile --offline`，将更新后的 `Cargo.lock` 一并提交审核。
 

@@ -80,14 +80,17 @@ jobs:
           cargo +stable test --locked --offline
           cargo +stable fmt --check
           cargo +stable clippy --locked --offline --all-targets -- -D warnings
+      - name: Publishing path regressions
+        if: github.event_name != 'workflow_dispatch' || inputs.target != 'pypi'
+        run: python scripts/publishing_regression.py
       - name: Build and check distributions
         run: |
           python -m build
           python -m twine check --strict dist/*
           cargo +stable package --locked --offline
       - name: Cargo publishing preflight
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
-        run: cargo +stable publish --dry-run --locked --offline
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && (inputs.target == 'both' || inputs.target == 'crates')
+        run: cargo +stable publish --dry-run --locked
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: python-dist
