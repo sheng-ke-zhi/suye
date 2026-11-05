@@ -1,0 +1,9 @@
+[package]
+name = "suye"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only development toolchain diagnostics for SUYE"
+repository = "https://github.com/sheng-ke-zhi/suye"
+readme = "README.md"
+publish = false
+include = ["Cargo.toml", "Cargo.lock", "src/**", "tests/cli.rs", "README.md", "LICENSE"]

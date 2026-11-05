@@ -1,0 +1,146 @@
+name: Build and publish
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag on main, for example v0.1.0
+        required: true
+        type: string
+      target:
+        description: Package indexes to publish to
+        required: true
+        type: choice
+        default: both
+        options: [both, pypi, crates]
+      publish:
+        description: Actually upload packages after validation and environment approval
+        required: true
+        type: boolean
+        default: false
+      crates_auth:
+        description: Use bootstrap only for the first crates.io publication
+        required: true
+        type: choice
+        default: trusted
+        options: [trusted, bootstrap]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.event_name }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Validate versions and release source
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          python scripts/check_release.py
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            test "$WORKFLOW_REF" = refs/heads/main
+            python scripts/check_release.py --tag "$RELEASE_TAG"
+            test "$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+            git merge-base --is-ancestor HEAD origin/main
+            if [[ "$PUBLISH" == true ]]; then
+              python scripts/check_release.py --tag "$RELEASE_TAG" --publish
+            fi
+          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Prepare build tools
+        run: |
+          python -m pip install build twine
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Test both implementations and release guards
+        run: |
+          PYTHONPATH=python python -m unittest discover -s tests -p 'test_*.py'
+          python -m unittest discover -s scripts -p 'test_*.py'
+          cargo +stable test --locked --offline
+          cargo +stable fmt --check
+          cargo +stable clippy --locked --offline --all-targets -- -D warnings
+      - name: Publishing path regressions
+        if: github.event_name != 'workflow_dispatch' || inputs.target != 'pypi'
+        run: python scripts/publishing_regression.py
+      - name: Build and check distributions
+        run: |
+          python -m build
+          python -m twine check --strict dist/*
+          cargo +stable package --locked --offline
+      - name: Cargo publishing preflight
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && (inputs.target == 'both' || inputs.target == 'crates')
+        run: cargo +stable publish --dry-run --locked
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  pypi:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'sheng-ke-zhi/suye' && inputs.publish && (inputs.target == 'both' || inputs.target == 'pypi')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: python-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
+        with:
+          packages-dir: dist
+          verbose: false
+
+  crates:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'sheng-ke-zhi/suye' && inputs.publish && (inputs.target == 'both' || inputs.target == 'crates')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9
+        if: inputs.crates_auth == 'trusted'
+        id: auth
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ inputs.crates_auth == 'bootstrap' && secrets.CRATES_IO_BOOTSTRAP_TOKEN || steps.auth.outputs.token }}
+        run: |
+          if [[ -z "$CARGO_REGISTRY_TOKEN" ]]; then
+            echo "Missing crates.io publishing authorization. Configure the environment or trusted publisher."
+            exit 1
+          fi
+          cargo +stable publish --locked
