@@ -6,4 +6,4 @@ description = "Read-only development toolchain diagnostics for SUYE"
 repository = "https://github.com/sheng-ke-zhi/suye"
 readme = "README.md"
 publish = false
-include = ["Cargo.toml", "Cargo.lock", "src/**", "tests/cli.rs", "README.md"]
+include = ["Cargo.toml", "Cargo.lock", "src/**", "tests/cli.rs", "README.md", "LICENSE"]

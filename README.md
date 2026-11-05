@@ -47,22 +47,127 @@ python3 -c 'from setuptools.build_meta import build_sdist; build_sdist("dist")'
 cargo package --offline
 ```
 
-## 发布前置条件
+## GitHub Actions 与发布
 
-仓库保持私有。**上传 PyPI/crates.io 后，包内源码、README 和元数据会公开，
-即使 GitHub 仓库仍为私有。** 当前未获得许可证和公开包内容确认，不附加任何开源许可证，
-不配置自动发布流程；Cargo 设置 `publish = false` 防止误发布。
-本地构建成功不代表平台已接受、名称可注册或包已发布。
+仓库已按用户授权公开。**上传 PyPI/crates.io 还会公开发行归档中的源码、README 和元数据。**
+公开仓库不等于已经选择开源许可证；许可证仍待用户确认，当前保留 `publish = false`。
+本地构建或 CI 成功不代表包已发布，也不保证名称可注册。
 
-正式发布前必须：
+流程文件是 `.github/workflows/release.yml`，Actions 页面显示为 **Build and publish**：
 
-1. 由用户确认许可证及允许公开的源码、文档和元数据，审核两个发行归档的文件清单。
-2. 复核版本号和名称可用性。PyPI 的 PEP 541 与 crates.io 使用政策限制纯占名包；
-   本项目应作为实际工具维护，不以无功能包占名。
-3. 配置用户批准的安全发布授权（例如受信发布或安全凭据配置），不得把令牌写入仓库、
-   日志或评论。私有 GitHub 仓库本身不赋予任何包索引发布权限。
-4. 经审核解除 Cargo 的发布禁用，再分别执行平台所需的构建、检查及发布步骤。
+- PR 和 main 分支更新只运行版本检查、Python/Rust 测试、格式/Clippy、构建与归档验证。
+- 正式上传仅限在 main 上手动 **Run workflow**，并明确勾选 `publish`。
+  创建 tag 或 GitHub Release 本身不会上传包。
+- 手动运行必须提供已有的稳定版本 tag（例如 `v0.1.0`），且该提交必须属于 main 历史。
+  tag、`setup.cfg`、`suye.__version__`、`Cargo.toml` 必须一致；Cargo 使用 `--locked`。
+- 上传前还要求 LICENSE 非空、两个清单的 SPDX 许可证表达式一致、Cargo 明确允许 crates.io。
+  构建/校验任务没有 OIDC 权限，只有两个发布任务有 `id-token: write`，不需要仓库写权限。
+- PyPI 使用同次运行构建的 artifact；crates.io 固定 checkout 已验证的提交 SHA。
+  所有外部 Action 固定到提交 SHA，不使用可移动标签。
+- `publish=false`（默认）只做构建演练，不验证平台登录或执行环境审核；
+  `publish=true` 才额外校验许可证、执行 Cargo 发布预检，再进入发布环境审核和上传。
 
-政策入口：<https://peps.python.org/pep-0541/#invalid-projects>、<https://crates.io/policies>。
-发布授权说明：<https://docs.pypi.org/trusted-publishers/>、
-<https://doc.rust-lang.org/cargo/reference/publishing.html>。
+### 第一步：许可证与版本（发布前必做）
+
+由项目负责人确定许可证，通过审核后的提交加入：
+
+1. 根目录 `LICENSE`：用户确认的完整许可证文本。
+2. `setup.cfg` 的 `[metadata]`：加入 `license = 用户确认的 SPDX 表达式`。
+3. `Cargo.toml` 的 `[package]`：加入完全相同的 `license` 字段，
+   并将 `publish = false` 改为 `publish = ["crates-io"]`。
+
+本项目不代选许可证。发布脚本和测试使用 Python 3.11+（CI 为 3.12），可独立检查：
+
+```sh
+python3.12 scripts/check_release.py
+python3.12 -m unittest discover -s scripts -p 'test_*.py'
+python3.12 scripts/check_release.py --tag v0.1.0 --publish
+```
+
+最后一条在尚未确认许可证时应失败，这不是普通构建失败。
+后续版本需同步修改 `setup.cfg`、`python/suye/__init__.py`、`Cargo.toml`，
+再运行 `cargo generate-lockfile --offline`，将更新后的 `Cargo.lock` 一并提交审核。
+
+### 第二步：GitHub 需要配置什么
+
+打开 `sheng-ke-zhi/suye` → **Settings → Environments → New environment**，建立以下环境：
+
+| 准确名称 | 是否必需 | 用途及设置 |
+| --- | --- | --- |
+| `pypi` | 发布 PyPI 必需 | 添加 Required reviewers；Deployment branches and tags 选 Selected branches and tags，仅添加 branch `main` |
+| `crates-io` | 发布 crates.io 必需 | 同样添加审核人并仅允许 branch `main`；首次发布的 Secret 放在这里 |
+
+平台绑定的 Environment 名称必须逐字匹配。即使 checkout 的代码来自 tag，工作流本身在 main
+上手动运行，所以环境允许的是 branch `main`，不是 tag。若开启 Prevent self-review，需另一个审核人。
+
+Secrets/Variables 清单：
+
+| 项目 | 是否必需 | 在哪里、填什么 |
+| --- | --- | --- |
+| Environment secret `CRATES_IO_BOOTSTRAP_TOKEN` | 仅 crates.io 首次发布必需 | Settings → Environments → `crates-io` → Environment secrets → Add environment secret，值为下一节创建的令牌 |
+| Repository secrets | 无需 | 不需要配置 `PYPI_API_TOKEN`、`TWINE_PASSWORD`、`GITHUB_TOKEN` 或额外的 `CARGO_REGISTRY_TOKEN` Secret |
+| Repository / Environment Variables | 无需 | 此工作流没有要手动配置的 Variables |
+| `GITHUB_TOKEN`、OIDC 相关运行时变量 | 无需手填 | GitHub 自动提供；`CARGO_REGISTRY_TOKEN` 仅在发布步骤中由工作流自动注入 |
+
+不要把令牌写入文件、PR 或评论。若组织限制 Actions 使用，需要在组织/仓库 Actions 设置中允许
+该流程所使用的 `actions/*`、`pypa/gh-action-pypi-publish`、`rust-lang/crates-io-auth-action`。
+不需要把默认 Workflow permissions 改为仓库读写。
+
+### 第三步：PyPI 首次即使用受信发布（无令牌）
+
+用将持有此项目的 PyPI 账号登录并按平台要求启用双因素认证。
+首次发布前打开 <https://pypi.org/manage/account/publishing/>，添加 GitHub pending publisher：
+
+| 表单字段 | 准确值 |
+| --- | --- |
+| PyPI Project Name | `suye` |
+| Owner | `sheng-ke-zhi` |
+| Repository name | `suye` |
+| Workflow name / filename | `release.yml`（不是完整路径，也不是 Actions 显示名称） |
+| Environment name | `pypi` |
+
+已有项目时，改用项目 **Manage → Publishing** 添加同样绑定。
+pending publisher 在首次成功上传后自动转为正式绑定，**创建绑定本身不会占住包名**。
+不需要生成 PyPI API token，也不需要配置 PyPI Secret。
+
+### 第四步：crates.io 首次用一次性授权，之后使用受信发布
+
+按当前官方限制，**首次创建 crate 仍需要 API token**，不能直接用 OIDC 创建新 crate。
+
+1. 登录将持有此 crate 的 crates.io 账号，打开 <https://crates.io/settings/tokens> → New Token。
+2. 名称可填 `suye-first-publish`；Expiration 选短有效期（例如 7 days）；
+   Scopes 仅选择 `publish-new`（Publish new crates），Crates 的 name pattern 限制为 `suye`。
+   无需 change-owners、yank、trusted-publishing 或 publish-update 权限。
+3. 将令牌保存为上节 `crates-io` 环境里的 `CRATES_IO_BOOTSTRAP_TOKEN`。
+   只在首次发布时选择 `crates_auth=bootstrap`，后续不再用这个令牌。
+4. 首次发布成功后，打开 crate 页面 **Settings → Trusted Publishing → Add → GitHub**，填写：
+
+| 字段 | 准确值 |
+| --- | --- |
+| Repository owner | `sheng-ke-zhi` |
+| Repository name | `suye` |
+| Workflow filename | `release.yml` |
+| Environment | `crates-io` |
+
+5. 保存绑定后撤销首次令牌，并删除 GitHub 环境中的 `CRATES_IO_BOOTSTRAP_TOKEN` Secret。
+   后续使用默认的 `crates_auth=trusted`，工作流通过官方 Action 获取并自动撤销短期令牌。
+
+### 第五步：第一次发布怎么点
+
+1. 由人工审核并合并 PR，以及已确认许可证的修改。此交付不会主动合并或正式发布。
+2. 完成两个 GitHub 环境、PyPI pending publisher、crates.io 首次令牌配置。
+3. 从已审核 main 提交创建 `v0.1.0` tag。例如在 GitHub **Releases → Draft a new release**
+   创建 tag `v0.1.0`，Target 选 `main` 后发布 GitHub Release；这一步不会上传包索引。
+4. 打开 **Actions → Build and publish → Run workflow**，分支选 `main`，
+   `tag=v0.1.0`，`target=both`，`publish` **不勾选**，`crates_auth=bootstrap`，先检查构建演练结果。
+5. 确认许可证和发行归档内容后再运行同样参数，这次勾选 `publish`。
+   构建及发布预检通过后，在运行详情中审核 `pypi` 和 `crates-io` 两个环境的部署。
+6. 检查 PyPI/crates.io 上 `suye` 的版本均为 `0.1.0`，随后完成 crates.io 的受信发布绑定并撤销首次令牌。
+
+两平台发布并非原子操作。若一边成功另一边失败，先排查失败原因，再选择 `target=pypi` 或
+`target=crates` 只补发失败平台；不要重复上传已经成功的同版本。
+后续版本创建新的 `vX.Y.Z` tag，`crates_auth=trusted`；不要移动已经发布的 tag。
+
+政策：<https://peps.python.org/pep-0541/#invalid-projects>、<https://crates.io/policies>。
+官方发布说明：<https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/>、
+<https://crates.io/docs/trusted-publishing>。
