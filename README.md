@@ -119,7 +119,7 @@ Secrets/Variables 清单：
 | 项目 | 是否必需 | 在哪里、填什么 |
 | --- | --- | --- |
 | Environment secret `CRATES_IO_BOOTSTRAP_TOKEN` | 仅 crates.io 首次发布必需 | Settings → Environments → `crates-io` → Environment secrets → Add environment secret，值为下一节创建的令牌 |
-| Repository secrets | 无需 | 不需要配置 `PYPI_API_TOKEN`、`TWINE_PASSWORD`、`GITHUB_TOKEN` 或额外的 `CARGO_REGISTRY_TOKEN` Secret |
+| Repository secret `CARGO_REGISTRY_TOKEN` | 首次发布的可选替代 | 若已配置此 Secret，`crates_auth=bootstrap` 可直接使用；优先读取环境中的 `CRATES_IO_BOOTSTRAP_TOKEN` |
 | Repository / Environment Variables | 无需 | 此工作流没有要手动配置的 Variables |
 | `GITHUB_TOKEN`、OIDC 相关运行时变量 | 无需手填 | GitHub 自动提供；`CARGO_REGISTRY_TOKEN` 仅在发布步骤中由工作流自动注入 |
 
@@ -152,7 +152,7 @@ pending publisher 在首次成功上传后自动转为正式绑定，**创建绑
 2. 名称可填 `suye-first-publish`；Expiration 选短有效期（例如 7 days）；
    Scopes 仅选择 `publish-new`（Publish new crates），Crates 的 name pattern 限制为 `suye`。
    无需 change-owners、yank、trusted-publishing 或 publish-update 权限。
-3. 将令牌保存为上节 `crates-io` 环境里的 `CRATES_IO_BOOTSTRAP_TOKEN`。
+3. 将令牌保存为上节 `crates-io` 环境里的 `CRATES_IO_BOOTSTRAP_TOKEN`，或仓库 Secret `CARGO_REGISTRY_TOKEN`。
    只在首次发布时选择 `crates_auth=bootstrap`，后续不再用这个令牌。
 4. 首次发布成功后，打开 crate 页面 **Settings → Trusted Publishing → Add → GitHub**，填写：
 
@@ -163,7 +163,7 @@ pending publisher 在首次成功上传后自动转为正式绑定，**创建绑
 | Workflow filename | `release.yml` |
 | Environment | `crates-io` |
 
-5. 保存绑定后撤销首次令牌，并删除 GitHub 环境中的 `CRATES_IO_BOOTSTRAP_TOKEN` Secret。
+5. 保存绑定后撤销首次令牌，并删除首次发布使用的 `CRATES_IO_BOOTSTRAP_TOKEN` 或 `CARGO_REGISTRY_TOKEN` Secret。
    后续使用默认的 `crates_auth=trusted`，工作流通过官方 Action 获取并自动撤销短期令牌。
 
 ### 第五步：第一次发布怎么点
